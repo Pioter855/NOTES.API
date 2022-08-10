@@ -1,128 +1,158 @@
 const express = require("express");
-const mysql = require("mysql2");
 const bodyParser = require("body-parser");
-const path = require("path");
+const Joi = require("joi");
+const Sequelize = require("sequelize");
+
 const app = express();
 
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-const connection = mysql.createConnection({
+const sequelize = new Sequelize("notatnik", "root", "Programowanie1!", {
+	dialect: "mysql",
 	host: "localhost",
-	user: "root",
-	password: "Programowanie1!",
-	database: "notatnik",
+	pool: {
+		max: 5,
+		min: 1,
+		acquire: 30000,
+		idle: 10000,
+	},
 });
 
-connection.connect();
 
-app.get("/", (req, res, next) => {
-	connection.query("SELECT * FROM notes", (err, rows, fields) => {
-		if (err) {
-			res.status(500);
-			res.send({ succes: "false" });
-			console.log("blad przy wyswietlaniu notatnik");
-			return;
-		}
-		console.log(rows);
-		res.send(rows);
-	});
-});
+    sequelize.authenticate();
 
-app.post("/note", ({ body: { title, note } }, res) => {
-	console.log(title);
-	console.log(note);
-	if (!title && !note) {
-		res.send({ succes: "false", reason: "no data" });
-		console.log("nie pyklo");
+const Notes = sequelize.define(
+	"notes",
+	{
+		id: {
+			type: Sequelize.INTEGER,
+			primaryKey: true,
+		},
+		title: {
+			type: "VARCHAR(100)",
+			allownull: false,
+		},
+		note: {
+			type: Sequelize.STRING,
+			allownull: true,
+		},
+	},
+	{
+		paranoid: true,
+	}
+);
+
+app.get("/notes", async (_, res) => {
+	try {
+		const notes = await Notes.findAll();
+		res.json({ success: true, data: notes });
+		return;
+	} catch (error) {
+		res.status(500).send({ success: false, reason: "programist error" });
 		return;
 	}
-	connection.query(
-		`INSERT INTO notes(title,note) VALUES ('${title}', '${note}')`,
-		(err) => {
-			if (err) {
-				res.status(500);
-				res.send({ succes: "false" });
-				console.log(err, "cos poszlo nie tak");
-				return;
-			}
-			res.send({ succes: "true", title, note });
-			console.log("udalo sie");
-			return;
-		}
-	);
 });
 
-app.delete("/note/:id", ({ params: { id } }, res) => {
-	connection.query(`SELECT id FROM notes where id=${id}`, (err, rows) => {
-		console.log(id);
-		if (rows.length === 0) {
-			res.status(400);
-			res.send({ succes: false, reason: "note not found" });
-			console.log("zle podana prosba o usuniecie");
-			return;
-		}
-
-		if (err) {
-			res.status(500);
-			res.send({ succes: "false", reason: "error in display" });
-			console.log("blad przy wyswietlaniu usuwania");
-			return;
-		}
-		console.log("usunieto");
-		connection.query(`DELETE FROM notes WHERE id=${id}`, (err) => {
-			if (err) throw err;
-			return;
-		});
-		res.send({ succes: true });
-		return;
+app.get("/notes/:id", async ({ params: { id } }, res) => {
+	const idSchema = Joi.object({
+		id: Joi.number().min(1).required(),
 	});
+	const { error } = idSchema.validate({ id });
+	if(error) {
+		res.status(400).send({ success: false, reason: error });
+		return; 
+	}
+	const note = await Notes.findByPk(id);
+	if (!note) {
+		res.status(400).send({ success: false, reason: "note does not exist" });
+		return;
+	}
+	res.status(200).send({ succes: true, data: note });
+	return
 });
 
-app.patch(
-	"/note/:id",
-	({ params: { id }, body: { changeTitle, changeNote } }, res) => {
-		console.log(id);
-		console.log(changeNote);
-		console.log(changeTitle);
-		if (!changeNote || !changeTitle) {
-			res.status(400);
-			res.send({ succes: "fatal", reason: "wrong data" });
-			console.log("zle podana notatnka lub brak zmiany w jednej z kolumn");
+app.post("/notes", async ({ body: { title, note } }, res) => {
+	const noteSchema = Joi.object({
+		title: Joi.string().min(1).max(100).required(),
+		note: Joi.string().min(1).max(256).required(),
+	});
+	const { error } = noteSchema.validate({ title, note });
+	if (error) {
+		res.status(400).send({ success: false, reason: error });
+		return;
+	}
+	const noteWithTitle = await Notes.findOne({ where: { title } });
+	if (!noteWithTitle) {
+		try {
+			const notes = await Notes.create({ title, note });
+			res.status(200).send({ success: true, data : {title, note} });
+			return;
+		} catch (error) {
+			res.status(500).send({ success: false, reason: "something went wrong" });
 			return;
 		}
-		connection.query(
-			`SELECT id FROM notes where id='${id}'`,
-			(err, rows, fields) => {
-				console.log(rows);
-				if (rows.length === 0) {
-					res.status(400);
-					res.send({ succes: false, reason: "note does not exist" });
-					console.log("notatka nie isnieje");
-					return;
-				}
-				if (err) {
-					res.status(500);
-					res.send({ succes: "false" });
-					console.log("blad przy wyswietlaniu edytowania");
-					return;
-				}
+	}
+	res.status(400).send({ success: false, reason: "title already exist" });
+	return;
+});
 
-				connection.query(
-					`UPDATE notes SET title='${changeTitle}', note='${changeNote}' WHERE id='${id}'`,
-					(err) => {
-						if (err) throw err;
-						return;
-					}
-				);
-				res.send({ succes: true, reason: "note updated" });
-				console.log("notatka zostala zaktualizowana");
+app.delete("/notes/:id", async ({ params: { id } }, res) => {
+	const idSchema = Joi.object({
+		id: Joi.number().min(1).required(),
+	});
+	const { error } = idSchema.validate({ id });
+	if (error) {
+		res.status(400).send({ success: false, reason: error });
+		return;
+	}
+	const note = await Notes.findByPk(id);
+	if(!note){
+		res.status(400).send({success : false, reason : 'something went wrong'})
+		return
+	}
+	try {
+		 await note.destroy();
+		res.status(200).send({ success: true, reason: "the note has been deleted" });
+		return;
+	} catch (error) {
+		res.status(400).send({ success: false, reason: "note does not exist" });
+		return;
+	}
+});
+
+app.patch("/notes/:id",async ({ params: { id }, body: { title, note } }, res) => {
+		const changeSchema = Joi.object({
+			id: Joi.number().required(),
+			title: Joi.string().min(1).max(100).required(),
+			note: Joi.string().min(1).max(255).required(),
+		});
+
+		const { error } = changeSchema.validate({ id, title, note });
+
+		if (error) {
+			res.status(400).send({ success: false, reason: error });
+			return;
+		}
+
+		const noteWithTitle = await Notes.findOne({ where: { title } });
+
+		if (!noteWithTitle) {
+			try {
+				const oneNote = await Notes.findByPk(id);
+				await oneNote.update({ title, note });
+				res.status(200).send({ success: true, reason: "the note has been updated" });
+				return;
+			} catch (error) {
+				res.status(500).send({ success: false, reasons: "something went wrong" });
 				return;
 			}
-		);
+		}
+		res.status(400).send({ success: false, reason: "title already exist" });
+		return;
 	}
 );
 
 app.listen(3000, () => {
-	console.log("server slucha");
+	console.log("serwer slucha");
 });
