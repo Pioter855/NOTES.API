@@ -5,10 +5,12 @@ const sequelize = require('../database').sequelize
 
 
 const Notes = sequelize.define(
-	"notes",
+	"Notes",
 	{
 		id: {
 			type: Sequelize.INTEGER,
+			autoIncrement: true,
+			allownull: false,
 			primaryKey: true,
 		},
 		title: {
@@ -24,5 +26,10 @@ const Notes = sequelize.define(
 		paranoid: true,
 	}
 );
+
+// sequelize.sync({ force: true })
+//   .then(() => {
+//     console.log(`Database & tables created!`);
+//   });
 
 module.exports = { Notes }
